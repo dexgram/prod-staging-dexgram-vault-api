@@ -1,0 +1,53 @@
+name: Deploy to Cloudflare (prod)
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Deploy Worker to prod
+    runs-on: ubuntu-latest
+    environment: prod
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # (idea) 
+      # - name: Build
+      #   run: npm run build
+
+      # 1) Sync GitHub secrets -> Cloudflare Worker secrets (prod)
+      - name: Sync secrets to Cloudflare (prod)
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Push secret 
+#          printf "%s" "${HMAC_SECRET}" | npx wrangler secret put HMAC_SECRET --env prod
+
+          echo "Secrets synced to Cloudflare (prod)"
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+
+          HMAC_SECRET: ${{ secrets.HMAC_SECRET }}
+
+      # 2) Deploy worker (prod)
+      - name: Deploy with Wrangler (prod)
+        run: npx wrangler deploy --env prod
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+
