@@ -4,8 +4,8 @@ compatibility_date = "2025-01-01"
 
 [[d1_databases]]
 binding = "DB"
-database_name = "dexgram-vault"
-database_id = "REPLACE_WITH_D1_DATABASE_ID"
+database_name = "prod-dexgram-vault-db"
+database_id = "e404af52-9444-49ae-8456-4a7014aa570a"
 
 [vars]
 TOKEN_TTL_SECONDS = "86400"
