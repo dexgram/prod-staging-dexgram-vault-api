@@ -1,0 +1,16 @@
+name = "dexgram-vault-api"
+main = "src/index.ts"
+compatibility_date = "2025-01-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "dexgram-vault"
+database_id = "REPLACE_WITH_D1_DATABASE_ID"
+
+[vars]
+TOKEN_TTL_SECONDS = "86400"
+URL_TTL_SECONDS = "300"
+MAX_UPLOAD_BYTES = "104857600"
+RATE_LIMIT_MAX_REQUESTS = "60"
+RATE_LIMIT_WINDOW_MS = "60000"
+# BUCKET_CONFIGS_JSON and SESSION_SECRET should be set via `wrangler secret put` or GitHub Actions.
