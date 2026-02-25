@@ -34,15 +34,17 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Push secret 
-          # printf "%s" "${HMAC_SECRET}" | npx wrangler secret put HMAC_SECRET --env prod
+          # Push secrets
+          printf "%s" "${SESSION_SECRET}" | npx wrangler secret put SESSION_SECRET --env prod
+          printf "%s" "${BUCKET_CONFIGS_JSON}" | npx wrangler secret put BUCKET_CONFIGS_JSON --env prod
 
           echo "Secrets synced to Cloudflare (prod)"
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 
-          # HMAC_SECRET: ${{ secrets.HMAC_SECRET }}
+          SESSION_SECRET: ${{ secrets.SESSION_SECRET }}
+          BUCKET_CONFIGS_JSON: ${{ secrets.BUCKET_CONFIGS_JSON }}
 
       # 2) Deploy worker (prod)
       - name: Deploy with Wrangler (prod)
