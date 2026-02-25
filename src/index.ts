@@ -164,7 +164,7 @@ export default {
       const sizeBytes = Number(body.sizeBytes);
       if (sizeBytes <= 0) return badRequest("sizeBytes must be positive");
 
-      const maxUploadBytes = Number(env.MAX_UPLOAD_BYTES ?? 100 * 1024 * 1024);
+      const maxUploadBytes = Number(env.MAX_UPLOAD_BYTES ?? 5 * 1024 * 1024 * 1024);
       if (sizeBytes > maxUploadBytes) return badRequest("File too large for plan", 403);
 
       if (!isSubscriptionActive(user.subscription_expires_at)) {
