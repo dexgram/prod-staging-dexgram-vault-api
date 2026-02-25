@@ -71,7 +71,7 @@ Optional non-secret vars:
 
 - `TOKEN_TTL_SECONDS` (default `86400`)
 - `URL_TTL_SECONDS` (default `300`)
-- `MAX_UPLOAD_BYTES` (default `104857600`)
+- `MAX_UPLOAD_BYTES` (default `5368709120`)
 - `RATE_LIMIT_MAX_REQUESTS` (default `60`)
 - `RATE_LIMIT_WINDOW_MS` (default `60000`)
 
