@@ -162,18 +162,18 @@ Marks row as deleted, decrements `used_bytes`, and attempts async object deletio
 
 ```bash
 # 1) Login
-TOKEN=$(curl -s http://127.0.0.1:8787/auth/login \
+TOKEN=$(curl -s https://prod-vaultdb.dexgram.app/auth/login \
   -H 'content-type: application/json' \
   -d '{"clientCode":"3912 6076 9611 6679"}' | jq -r .token)
 
 # 2) Request upload URL
-curl -s http://127.0.0.1:8787/uploads/request \
+curl -s https://prod-vaultdb.dexgram.app/uploads/request \
   -H "authorization: Bearer $TOKEN" \
   -H 'content-type: application/json' \
   -d '{"mimeType":"image/jpeg","sizeBytes":1024}'
 
 # 3) List files
-curl -s http://127.0.0.1:8787/files \
+curl -s https://prod-vaultdb.dexgram.app/files \
   -H "authorization: Bearer $TOKEN"
 ```
 

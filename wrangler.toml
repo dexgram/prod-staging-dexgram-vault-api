@@ -14,3 +14,11 @@ MAX_UPLOAD_BYTES = "5368709120"
 RATE_LIMIT_MAX_REQUESTS = "60"
 RATE_LIMIT_WINDOW_MS = "60000"
 # BUCKET_CONFIGS_JSON and SESSION_SECRET should be set via `wrangler secret put` or GitHub Actions.
+
+[env.prod]
+name = "prod-dexgram-vaultdb-api"
+workers_dev = false
+staging_urls = false
+routes = [
+  { pattern = "prod-vaultdb.dexgram.app/*", zone_name = "dexgram.app" }
+]
