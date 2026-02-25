@@ -177,6 +177,50 @@ curl -s https://prod-vaultdb.dexgram.app/files \
   -H "authorization: Bearer $TOKEN"
 ```
 
+## Troubleshooting
+
+### `error code: 1101` on Cloudflare
+
+Cloudflare `1101` means the Worker crashed with an unhandled runtime exception.
+In this project, common causes are:
+
+- invalid `BUCKET_CONFIGS_JSON` (fails in `JSON.parse`)
+- missing/misconfigured `DB` binding
+- unexpected data shape from D1 that triggers an exception
+
+Useful commands:
+
+```bash
+# stream production logs to see the real stack trace
+npx wrangler tail --env prod
+
+# verify secrets exist
+npx wrangler secret list --env prod
+```
+
+### Add/update a user manually with Wrangler (D1)
+
+`users.client_code` is stored as digits only (`3912607696116679`, without spaces).
+
+```bash
+# create or update a user in production
+npx wrangler d1 execute prod-dexgram-vault-db --remote --command "
+INSERT INTO users (client_code, bucket_id, quota_gb, subscription_expires_at)
+VALUES ('3912607696116679', 'wasabi-eu-1', 20, '2026-12-31T23:59:59.000Z')
+ON CONFLICT(client_code) DO UPDATE SET
+  bucket_id = excluded.bucket_id,
+  quota_gb = excluded.quota_gb,
+  subscription_expires_at = excluded.subscription_expires_at;
+"
+
+# verify
+npx wrangler d1 execute prod-dexgram-vault-db --remote --command "
+SELECT client_code, bucket_id, quota_gb, used_bytes, subscription_expires_at
+FROM users
+WHERE client_code = '3912607696116679';
+"
+```
+
 ## GitHub Actions secret injection
 
 In CI/CD, inject secrets as environment variables / Worker secrets before deploy:
