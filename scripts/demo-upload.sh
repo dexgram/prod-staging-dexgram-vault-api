@@ -1,12 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Demo script: login -> request upload URL -> PUT file -> complete upload -> list files
-# Usage:
-#   ./scripts/demo-upload.sh <client_code> <file_path> [api_base]
-# Example:
-#   ./scripts/demo-upload.sh "3912607696116670" ./hello.txt
-#   ./scripts/demo-upload.sh "3912 6076 9611 6670" ./hello.txt https://prod-vaultdb.dexgram.app
+# Multi-action demo script:
+# - upload (default): login -> request upload URL -> PUT -> complete -> list
+# - replace: overwrite an existing file_id with new bytes
+# - delete: delete a file by file_id
+# - usage: show per-client occupied space
+# - list: list active files
+#
+# Usage examples:
+#   ./scripts/demo-upload.sh upload 3912607696116670 ./hello.txt
+#   ./scripts/demo-upload.sh replace 3912607696116670 ./new.txt --file-id <uuid>
+#   ./scripts/demo-upload.sh usage 3912607696116670
+#   ./scripts/demo-upload.sh list 3912607696116670
+#   ./scripts/demo-upload.sh delete 3912607696116670 --file-id <uuid>
 
 if ! command -v curl >/dev/null 2>&1; then
   echo "ERROR: curl is required" >&2
@@ -18,140 +25,234 @@ if ! command -v jq >/dev/null 2>&1; then
   exit 1
 fi
 
-if [[ $# -lt 2 || $# -gt 3 ]]; then
-  echo "Usage: $0 <client_code> <file_path> [api_base]" >&2
-  exit 1
+action="${1:-upload}"
+if [[ "$action" != "upload" && "$action" != "replace" && "$action" != "delete" && "$action" != "usage" && "$action" != "list" ]]; then
+  set -- "upload" "$@"
+  action="upload"
 fi
 
-CLIENT_CODE="$1"
-FILE_PATH="$2"
-API_BASE="${3:-https://prod-vaultdb.dexgram.app}"
+shift || true
 
-if [[ ! -f "$FILE_PATH" ]]; then
-  echo "ERROR: file not found: $FILE_PATH" >&2
+CLIENT_CODE="${1:-}"
+if [[ -z "$CLIENT_CODE" ]]; then
+  echo "Usage:" >&2
+  echo "  $0 [upload] <client_code> <file_path> [api_base]" >&2
+  echo "  $0 replace <client_code> <file_path> --file-id <uuid> [api_base]" >&2
+  echo "  $0 delete <client_code> --file-id <uuid> [api_base]" >&2
+  echo "  $0 usage <client_code> [api_base]" >&2
+  echo "  $0 list <client_code> [api_base]" >&2
   exit 1
 fi
+shift || true
 
-# Compute filename metadata and validations done on client side before upload request.
-if command -v stat >/dev/null 2>&1; then
-  if stat --version >/dev/null 2>&1; then
-    SIZE_BYTES="$(stat -c%s "$FILE_PATH")" # GNU stat
+FILE_PATH=""
+FILE_ID=""
+API_BASE="https://prod-vaultdb.dexgram.app"
+
+# Parse remaining args: optional file path, optional --file-id, optional api_base.
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --file-id)
+      FILE_ID="${2:-}"
+      shift 2
+      ;;
+    http://*|https://*)
+      API_BASE="$1"
+      shift
+      ;;
+    *)
+      if [[ -z "$FILE_PATH" ]]; then
+        FILE_PATH="$1"
+      else
+        API_BASE="$1"
+      fi
+      shift
+      ;;
+  esac
+done
+
+compute_size() {
+  local path="$1"
+  if command -v stat >/dev/null 2>&1; then
+    if stat --version >/dev/null 2>&1; then
+      stat -c%s "$path"
+    else
+      stat -f%z "$path"
+    fi
   else
-    SIZE_BYTES="$(stat -f%z "$FILE_PATH")" # BSD stat
-  fi
-else
-  echo "ERROR: stat is required" >&2
-  exit 1
-fi
-
-if [[ "$SIZE_BYTES" -le 0 ]]; then
-  echo "ERROR: empty file is not allowed" >&2
-  exit 1
-fi
-
-# Local safety limit for the demo (server has its own MAX_UPLOAD_BYTES check too).
-MAX_LOCAL_BYTES=$((100 * 1024 * 1024))
-if [[ "$SIZE_BYTES" -gt "$MAX_LOCAL_BYTES" ]]; then
-  echo "ERROR: file too large for demo (${SIZE_BYTES} bytes > ${MAX_LOCAL_BYTES} bytes)" >&2
-  exit 1
-fi
-
-# Best effort mime type detection.
-if command -v file >/dev/null 2>&1; then
-  MIME_TYPE="$(file --mime-type -b "$FILE_PATH")"
-else
-  MIME_TYPE="application/octet-stream"
-fi
-
-# Very small allowlist for demo purpose.
-case "$MIME_TYPE" in
-  text/plain|image/jpeg|image/png|application/pdf) ;;
-  *)
-    echo "ERROR: unsupported MIME type for demo: $MIME_TYPE" >&2
-    echo "       Allowed: text/plain, image/jpeg, image/png, application/pdf" >&2
+    echo "ERROR: stat is required" >&2
     exit 1
+  fi
+}
+
+detect_mime() {
+  local path="$1"
+  if command -v file >/dev/null 2>&1; then
+    file --mime-type -b "$path"
+  else
+    echo "application/octet-stream"
+  fi
+}
+
+login() {
+  local resp token
+  echo "==> Login"
+  resp="$(curl -sS "$API_BASE/auth/login" \
+    -H 'content-type: application/json' \
+    -d "$(jq -nc --arg cc "$CLIENT_CODE" '{clientCode:$cc}')")"
+
+  token="$(echo "$resp" | jq -r '.token')"
+  if [[ -z "$token" || "$token" == "null" ]]; then
+    echo "ERROR: login failed" >&2
+    echo "$resp" >&2
+    exit 1
+  fi
+
+  echo "    token OK"
+  TOKEN="$token"
+}
+
+request_upload() {
+  local token="$1"
+  local mime="$2"
+  local size="$3"
+
+  curl -sS "$API_BASE/uploads/request" \
+    -H "authorization: Bearer $token" \
+    -H 'content-type: application/json' \
+    -d "$(jq -nc --arg mime "$mime" --argjson size "$size" '{mimeType:$mime,sizeBytes:$size}')"
+}
+
+put_binary() {
+  local url="$1"
+  local content_type="$2"
+  local content_length="$3"
+  local file_path="$4"
+
+  local status
+  status="$(curl -sS -o /tmp/dexgram_upload_response.txt -w '%{http_code}' -X PUT "$url" \
+    -H "content-type: $content_type" \
+    -H "content-length: $content_length" \
+    --data-binary "@$file_path")"
+
+  if [[ "$status" != "200" ]]; then
+    echo "ERROR: binary upload failed with HTTP $status" >&2
+    cat /tmp/dexgram_upload_response.txt >&2
+    exit 1
+  fi
+}
+
+complete_upload() {
+  local token="$1"
+  local file_id="$2"
+
+  local status resp
+  status="$(curl -sS -o /tmp/dexgram_complete_response.txt -w '%{http_code}' "$API_BASE/uploads/complete" \
+    -H "authorization: Bearer $token" \
+    -H 'content-type: application/json' \
+    -d "$(jq -nc --arg fid "$file_id" '{fileId:$fid}')")"
+
+  resp="$(cat /tmp/dexgram_complete_response.txt)"
+  if [[ "$status" != "200" ]]; then
+    echo "ERROR: complete failed with HTTP $status" >&2
+    echo "$resp" >&2
+    exit 1
+  fi
+
+  echo "$resp"
+}
+
+if [[ "$action" == "upload" || "$action" == "replace" ]]; then
+  if [[ -z "$FILE_PATH" || ! -f "$FILE_PATH" ]]; then
+    echo "ERROR: file path is required and must exist for '$action'" >&2
+    exit 1
+  fi
+fi
+
+if [[ "$action" == "delete" || "$action" == "replace" ]]; then
+  if [[ -z "$FILE_ID" ]]; then
+    echo "ERROR: --file-id <uuid> is required for '$action'" >&2
+    exit 1
+  fi
+fi
+
+TOKEN=""
+login
+
+case "$action" in
+  upload)
+    SIZE_BYTES="$(compute_size "$FILE_PATH")"
+    MIME_TYPE="$(detect_mime "$FILE_PATH")"
+
+    echo "==> Request upload URL"
+    REQUEST_RESP="$(request_upload "$TOKEN" "$MIME_TYPE" "$SIZE_BYTES")"
+    FILE_ID_CREATED="$(echo "$REQUEST_RESP" | jq -r '.fileId')"
+    UPLOAD_URL="$(echo "$REQUEST_RESP" | jq -r '.uploadUrl')"
+    REQ_CONTENT_TYPE="$(echo "$REQUEST_RESP" | jq -r '.requiredHeaders["content-type"]')"
+    REQ_CONTENT_LENGTH="$(echo "$REQUEST_RESP" | jq -r '.requiredHeaders["content-length"]')"
+
+    if [[ -z "$FILE_ID_CREATED" || "$FILE_ID_CREATED" == "null" || -z "$UPLOAD_URL" || "$UPLOAD_URL" == "null" ]]; then
+      echo "ERROR: upload request failed" >&2
+      echo "$REQUEST_RESP" >&2
+      exit 1
+    fi
+
+    echo "    fileId: $FILE_ID_CREATED"
+    put_binary "$UPLOAD_URL" "$REQ_CONTENT_TYPE" "$REQ_CONTENT_LENGTH" "$FILE_PATH"
+    echo "    upload PUT OK"
+
+    echo "==> Complete upload"
+    COMPLETE_RESP="$(complete_upload "$TOKEN" "$FILE_ID_CREATED")"
+    echo "    $COMPLETE_RESP"
+
+    echo "==> List files"
+    curl -sS "$API_BASE/files" -H "authorization: Bearer $TOKEN" | jq .
+    ;;
+
+  replace)
+    SIZE_BYTES="$(compute_size "$FILE_PATH")"
+    MIME_TYPE="$(detect_mime "$FILE_PATH")"
+
+    echo "==> Request replace upload URL"
+    REQUEST_RESP="$(curl -sS "$API_BASE/files/$FILE_ID/replace/request" \
+      -H "authorization: Bearer $TOKEN" \
+      -H 'content-type: application/json' \
+      -d "$(jq -nc --arg mime "$MIME_TYPE" --argjson size "$SIZE_BYTES" '{mimeType:$mime,sizeBytes:$size}')")"
+
+    UPLOAD_URL="$(echo "$REQUEST_RESP" | jq -r '.uploadUrl')"
+    REQ_CONTENT_TYPE="$(echo "$REQUEST_RESP" | jq -r '.requiredHeaders["content-type"]')"
+    REQ_CONTENT_LENGTH="$(echo "$REQUEST_RESP" | jq -r '.requiredHeaders["content-length"]')"
+
+    if [[ -z "$UPLOAD_URL" || "$UPLOAD_URL" == "null" ]]; then
+      echo "ERROR: replace request failed" >&2
+      echo "$REQUEST_RESP" >&2
+      exit 1
+    fi
+
+    put_binary "$UPLOAD_URL" "$REQ_CONTENT_TYPE" "$REQ_CONTENT_LENGTH" "$FILE_PATH"
+    echo "    replace upload PUT OK"
+
+    echo "==> Complete replace"
+    curl -sS -X POST "$API_BASE/files/$FILE_ID/replace/complete" \
+      -H "authorization: Bearer $TOKEN" | jq .
+    ;;
+
+  usage)
+    echo "==> Usage"
+    curl -sS "$API_BASE/usage" -H "authorization: Bearer $TOKEN" | jq .
+    ;;
+
+  list)
+    echo "==> List files"
+    curl -sS "$API_BASE/files" -H "authorization: Bearer $TOKEN" | jq .
+    ;;
+
+  delete)
+    echo "==> Delete file"
+    curl -sS -X DELETE "$API_BASE/files/$FILE_ID" \
+      -H "authorization: Bearer $TOKEN" | jq .
     ;;
 esac
 
-echo "==> 1) Login"
-LOGIN_RESP="$(curl -sS "$API_BASE/auth/login" \
-  -H 'content-type: application/json' \
-  -d "$(jq -nc --arg cc "$CLIENT_CODE" '{clientCode:$cc}')")"
-
-TOKEN="$(echo "$LOGIN_RESP" | jq -r '.token')"
-if [[ -z "$TOKEN" || "$TOKEN" == "null" ]]; then
-  echo "ERROR: login failed" >&2
-  echo "$LOGIN_RESP" >&2
-  exit 1
-fi
-
-echo "    token OK"
-
-echo "==> 2) Request upload URL"
-REQUEST_RESP="$(curl -sS "$API_BASE/uploads/request" \
-  -H "authorization: Bearer $TOKEN" \
-  -H 'content-type: application/json' \
-  -d "$(jq -nc --arg mime "$MIME_TYPE" --argjson size "$SIZE_BYTES" '{mimeType:$mime,sizeBytes:$size}')")"
-
-FILE_ID="$(echo "$REQUEST_RESP" | jq -r '.fileId')"
-UPLOAD_URL="$(echo "$REQUEST_RESP" | jq -r '.uploadUrl')"
-REQ_CONTENT_TYPE="$(echo "$REQUEST_RESP" | jq -r '.requiredHeaders["content-type"]')"
-REQ_CONTENT_LENGTH="$(echo "$REQUEST_RESP" | jq -r '.requiredHeaders["content-length"]')"
-
-if [[ -z "$FILE_ID" || "$FILE_ID" == "null" || -z "$UPLOAD_URL" || "$UPLOAD_URL" == "null" ]]; then
-  echo "ERROR: upload request failed" >&2
-  echo "$REQUEST_RESP" >&2
-  exit 1
-fi
-
-echo "    fileId: $FILE_ID"
-echo "    required content-type: $REQ_CONTENT_TYPE"
-echo "    required content-length: $REQ_CONTENT_LENGTH"
-
-echo "==> 3) Upload binary to presigned URL (PUT)"
-UPLOAD_STATUS="$(curl -sS -o /tmp/dexgram_upload_response.txt -w '%{http_code}' -X PUT "$UPLOAD_URL" \
-  -H "content-type: $REQ_CONTENT_TYPE" \
-  -H "content-length: $REQ_CONTENT_LENGTH" \
-  --data-binary "@$FILE_PATH")"
-
-if [[ "$UPLOAD_STATUS" != "200" ]]; then
-  echo "ERROR: binary upload failed with HTTP $UPLOAD_STATUS" >&2
-  cat /tmp/dexgram_upload_response.txt >&2
-  exit 1
-fi
-
-echo "    upload PUT OK"
-
-echo "==> 4) Complete upload in API"
-COMPLETE_STATUS="$(curl -sS -o /tmp/dexgram_complete_response.txt -w '%{http_code}' "$API_BASE/uploads/complete" \
-  -H "authorization: Bearer $TOKEN" \
-  -H 'content-type: application/json' \
-  -d "$(jq -nc --arg fid "$FILE_ID" '{fileId:$fid}')")"
-
-COMPLETE_RESP="$(cat /tmp/dexgram_complete_response.txt)"
-
-if [[ "$COMPLETE_STATUS" != "200" ]]; then
-  echo "ERROR: complete failed with HTTP $COMPLETE_STATUS" >&2
-  echo "$COMPLETE_RESP" >&2
-  exit 1
-fi
-
-STATUS="$(echo "$COMPLETE_RESP" | jq -r '.status // empty')"
-if [[ "$STATUS" == "active" ]]; then
-  echo "    complete OK (status=active)"
-elif [[ "$(echo "$COMPLETE_RESP" | jq -r '.sizeBytes // empty')" != "" ]]; then
-  echo "    complete OK (activated now)"
-else
-  echo "ERROR: complete failed" >&2
-  echo "$COMPLETE_RESP" >&2
-  exit 1
-fi
-echo "    complete response: $COMPLETE_RESP"
-
-echo "==> 5) List files"
-LIST_RESP="$(curl -sS "$API_BASE/files" -H "authorization: Bearer $TOKEN")"
-
-echo "$LIST_RESP" | jq .
-
 echo
-echo "Demo finished successfully."
+echo "Done."

@@ -153,11 +153,37 @@ Returns file list from D1 only.
 
 Returns short-lived presigned GET URL and increments `downloads_count`.
 
-### 6) Delete file
+### 6) Replace/overwrite an existing file
+
+`POST /files/:fileId/replace/request` (auth required)
+
+Body:
+```json
+{ "mimeType": "text/plain", "sizeBytes": 2048 }
+```
+
+Returns a presigned PUT URL targeting the existing object key for that `fileId`.
+
+Then call:
+
+`POST /files/:fileId/replace/complete` (auth required)
+
+Worker verifies the new object and updates usage (`used_bytes`) using the size delta.
+
+### 7) Get client usage
+
+`GET /usage` (auth required)
+
+Returns:
+- `usedBytes` (tracked counter in `users`)
+- `actualActiveBytes` (sum of active file sizes in `files`)
+- `activeFilesCount`
+
+### 8) Delete file
 
 `DELETE /files/:fileId` (auth required)
 
-Marks row as deleted, decrements `used_bytes`, and attempts async object deletion from storage.
+Yes: delete is done by `fileId`. The API marks row as deleted, decrements `used_bytes`, and attempts async object deletion from storage.
 
 ## Example cURL
 
@@ -176,9 +202,35 @@ curl -s https://prod-vaultdb.dexgram.app/uploads/request \
 # 3) List files
 curl -s https://prod-vaultdb.dexgram.app/files \
   -H "authorization: Bearer $TOKEN"
+
+# 4) Usage by client
+curl -s https://prod-vaultdb.dexgram.app/usage \
+  -H "authorization: Bearer $TOKEN"
+
+# 5) Delete one file by file_id
+curl -s -X DELETE https://prod-vaultdb.dexgram.app/files/<file_id> \
+  -H "authorization: Bearer $TOKEN"
+
+# 6) Overwrite a file (same file_id)
+REPLACE=$(curl -s https://prod-vaultdb.dexgram.app/files/<file_id>/replace/request \
+  -H "authorization: Bearer $TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{"mimeType":"text/plain","sizeBytes":15}')
+
+UPLOAD_URL=$(echo "$REPLACE" | jq -r '.uploadUrl')
+CT=$(echo "$REPLACE" | jq -r '.requiredHeaders["content-type"]')
+CL=$(echo "$REPLACE" | jq -r '.requiredHeaders["content-length"]')
+
+curl -s -X PUT "$UPLOAD_URL" \
+  -H "content-type: $CT" \
+  -H "content-length: $CL" \
+  --data-binary '@./toto.txt'
+
+curl -s -X POST https://prod-vaultdb.dexgram.app/files/<file_id>/replace/complete \
+  -H "authorization: Bearer $TOKEN"
 ```
 
-## Demo script: end-to-end upload
+## Demo script: upload / replace / usage / delete
 
 Yes: the client should validate file metadata **before** requesting a presigned upload URL.
 
@@ -195,7 +247,16 @@ Use the included demo script to run the full flow from start to finish:
 echo -n "hello world!" > hello.txt
 
 # run end-to-end demo
-./scripts/demo-upload.sh "3912607696116670" ./hello.txt
+./scripts/demo-upload.sh upload "3912607696116670" ./hello.txt
+
+# show usage
+./scripts/demo-upload.sh usage "3912607696116670"
+
+# overwrite an existing file_id
+./scripts/demo-upload.sh replace "3912607696116670" ./hello-v2.txt --file-id <file_id>
+
+# delete by file_id
+./scripts/demo-upload.sh delete "3912607696116670" --file-id <file_id>
 ```
 
 What the script does:

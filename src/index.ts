@@ -36,6 +36,11 @@ interface FileRow {
   created_at: string;
 }
 
+interface SizeAggregateRow {
+  total_size_bytes: number | null;
+  active_files_count: number | null;
+}
+
 const GB = 1024 * 1024 * 1024;
 
 const json = (body: unknown, status = 200) =>
@@ -409,6 +414,148 @@ export default {
         return json({ files: rows.results ?? [] });
       }
 
+      if (request.method === "GET" && url.pathname === "/usage") {
+        const aggregate = await env.DB.prepare(
+          `SELECT
+             COALESCE(SUM(size_bytes), 0) AS total_size_bytes,
+             COUNT(*) AS active_files_count
+           FROM files
+           WHERE client_code = ? AND deleted_at IS NULL AND status = 'active'`,
+        )
+          .bind(clientCode)
+          .first<SizeAggregateRow>();
+
+        return json({
+          clientCode,
+          ...usagePayload(user),
+          activeFilesCount: Number(aggregate?.active_files_count ?? 0),
+          actualActiveBytes: Number(aggregate?.total_size_bytes ?? 0),
+        });
+      }
+
+      const replaceRequestMatch = url.pathname.match(
+        /^\/files\/([^/]+)\/replace\/request$/,
+      );
+      if (request.method === "POST" && replaceRequestMatch) {
+        const fileId = replaceRequestMatch[1];
+        const body = (await request.json().catch(() => null)) as {
+          mimeType?: string;
+          sizeBytes?: number;
+        } | null;
+
+        if (!body?.mimeType || !Number.isFinite(body.sizeBytes)) {
+          return badRequest("mimeType and sizeBytes are required");
+        }
+
+        const newSizeBytes = Number(body.sizeBytes);
+        if (newSizeBytes <= 0) return badRequest("sizeBytes must be positive");
+
+        const file = await env.DB.prepare(
+          "SELECT * FROM files WHERE file_id = ? AND client_code = ? AND deleted_at IS NULL AND status = 'active'",
+        )
+          .bind(fileId, clientCode)
+          .first<FileRow>();
+        if (!file) return badRequest("File not found", 404);
+
+        if (!isSubscriptionActive(user.subscription_expires_at)) {
+          return badRequest("Subscription expired", 403);
+        }
+
+        const maxUploadBytes = Number(
+          env.MAX_UPLOAD_BYTES ?? 5 * 1024 * 1024 * 1024,
+        );
+        if (newSizeBytes > maxUploadBytes)
+          return badRequest("File too large for plan", 403);
+
+        const currentSize = file.size_bytes ?? 0;
+        const nextUsedBytes = user.used_bytes - currentSize + newSizeBytes;
+        const maxBytes = user.quota_gb * GB;
+        if (nextUsedBytes > maxBytes) {
+          return badRequest("Quota exceeded", 403);
+        }
+
+        await env.DB.prepare(
+          "UPDATE files SET status = 'pending_replace' WHERE file_id = ?",
+        )
+          .bind(file.file_id)
+          .run();
+
+        const ttl = Number(env.URL_TTL_SECONDS ?? 300);
+        const uploadUrl = await presignUrl({
+          method: "PUT",
+          bucket: normalizedBucket,
+          objectKey: file.object_key,
+          expiresInSeconds: ttl,
+          headers: {
+            "content-type": body.mimeType,
+            "content-length": String(newSizeBytes),
+          },
+        });
+
+        return json({
+          fileId: file.file_id,
+          objectKey: file.object_key,
+          uploadUrl,
+          replaces: true,
+          expiresAt: new Date(Date.now() + ttl * 1000).toISOString(),
+          requiredHeaders: {
+            "content-type": body.mimeType,
+            "content-length": String(newSizeBytes),
+          },
+        });
+      }
+
+      const replaceCompleteMatch = url.pathname.match(
+        /^\/files\/([^/]+)\/replace\/complete$/,
+      );
+      if (request.method === "POST" && replaceCompleteMatch) {
+        const fileId = replaceCompleteMatch[1];
+        const file = await env.DB.prepare(
+          "SELECT * FROM files WHERE file_id = ? AND client_code = ? AND deleted_at IS NULL",
+        )
+          .bind(fileId, clientCode)
+          .first<FileRow>();
+        if (!file) return badRequest("File not found", 404);
+        if (file.status !== "pending_replace") {
+          return badRequest("File is not waiting for replacement", 409);
+        }
+
+        const headUrl = await presignUrl({
+          method: "HEAD",
+          bucket: normalizedBucket,
+          objectKey: file.object_key,
+          expiresInSeconds: 120,
+        });
+
+        const objectState = await verifyObjectAndReadHeaders(headUrl);
+        const previousSize = file.size_bytes ?? 0;
+        const delta = objectState.sizeBytes - previousSize;
+        const nowIso = new Date().toISOString();
+
+        await env.DB.batch([
+          env.DB.prepare(
+            "UPDATE files SET size_bytes = ?, mime_type = COALESCE(?, mime_type), status = 'active' WHERE file_id = ?",
+          ).bind(objectState.sizeBytes, objectState.contentType, file.file_id),
+          env.DB.prepare(
+            `UPDATE users
+             SET used_bytes = CASE WHEN used_bytes + ? >= 0 THEN used_bytes + ? ELSE 0 END,
+                 uploads_count = uploads_count + 1,
+                 last_activity_at = ?
+             WHERE client_code = ?`,
+          ).bind(delta, delta, nowIso, clientCode),
+        ]);
+
+        const refreshed = await getUser(env.DB, clientCode);
+        return json({
+          fileId: file.file_id,
+          replaced: true,
+          sizeBytes: objectState.sizeBytes,
+          previousSizeBytes: previousSize,
+          deltaBytes: delta,
+          ...usagePayload(refreshed ?? user),
+        });
+      }
+
       const downloadMatch = url.pathname.match(/^\/files\/([^/]+)\/download$/);
       if (request.method === "GET" && downloadMatch) {
         const fileId = downloadMatch[1];
@@ -479,7 +626,7 @@ export default {
         );
 
         const refreshed = await getUser(env.DB, clientCode);
-        return json({ deleted: true, ...usagePayload(refreshed ?? user) });
+        return json({ fileId, deleted: true, ...usagePayload(refreshed ?? user) });
       }
 
       return badRequest("Not found", 404);
