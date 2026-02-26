@@ -138,10 +138,17 @@ function validateBucketConfig(bucket: BucketConfig): string | null {
 
 function normalizeBucketEndpoint(endpoint: string): string {
   const trimmed = endpoint.trim();
-  if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
-    return trimmed;
+  const unquoted = trimmed.replace(/^(["'])(.*)\1$/, "$2").trim();
+
+  if (/^[a-z][a-z\d+.-]*:\/\//i.test(unquoted)) {
+    return unquoted;
   }
-  return `https://${trimmed}`;
+
+  if (unquoted.startsWith("//")) {
+    return `https:${unquoted}`;
+  }
+
+  return `https://${unquoted}`;
 }
 
 export default {
