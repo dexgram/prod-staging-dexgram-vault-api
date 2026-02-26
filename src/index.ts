@@ -4,9 +4,9 @@ import { presignUrl, type BucketConfig } from "./utils/s3";
 import { signSessionToken, verifySessionToken } from "./utils/token";
 
 interface Env {
+  [key: string]: unknown;
   DB: D1Database;
   SESSION_SECRET: string;
-  BUCKET_CONFIGS_JSON: string;
   TOKEN_TTL_SECONDS?: string;
   URL_TTL_SECONDS?: string;
   MAX_UPLOAD_BYTES?: string;
@@ -47,12 +47,39 @@ const json = (body: unknown, status = 200) =>
 const badRequest = (message: string, status = 400) =>
   json({ error: message }, status);
 
-function parseBucketConfigs(raw: string): Record<string, BucketConfig> {
-  const parsed = JSON.parse(raw) as BucketConfig[];
-  return parsed.reduce<Record<string, BucketConfig>>((acc, bucket) => {
-    acc[bucket.id] = bucket;
-    return acc;
-  }, {});
+function readBucketConfigsFromEnv(env: Env): Record<string, BucketConfig> {
+  const buckets: Record<string, BucketConfig> = {};
+  const maxBucketSlots = 20;
+
+  for (let index = 1; index <= maxBucketSlots; index += 1) {
+    const id = String(env[`BUCKET_ID_${index}`] ?? "").trim();
+    if (!id) continue;
+
+    const bucketName = String(env[`BUCKET_NAME_${index}`] ?? "").trim();
+    const endpoint = String(env[`BUCKET_ENDPOINT_${index}`] ?? "").trim();
+    const region = String(env[`BUCKET_REGION_${index}`] ?? "").trim();
+    const accessKey = String(env[`BUCKET_ACCESS_KEY_${index}`] ?? "").trim();
+    const secretKey = String(env[`BUCKET_SECRET_KEY_${index}`] ?? "").trim();
+
+    if (!bucketName || !endpoint || !region || !accessKey || !secretKey) {
+      throw new Error(`Incomplete bucket config at index ${index}`);
+    }
+
+    buckets[id] = {
+      id,
+      bucketName,
+      endpoint,
+      region,
+      accessKey,
+      secretKey,
+    };
+  }
+
+  if (Object.keys(buckets).length === 0) {
+    throw new Error("No bucket config found in indexed bucket secrets");
+  }
+
+  return buckets;
 }
 
 function serializeError(error: unknown): Record<string, unknown> {
@@ -173,14 +200,6 @@ export default {
         return badRequest("Server misconfigured", 500);
       }
 
-      if (!env.BUCKET_CONFIGS_JSON) {
-        console.error("[vault-api] missing BUCKET_CONFIGS_JSON", {
-          requestId,
-          path: url.pathname,
-        });
-        return badRequest("Server misconfigured", 500);
-      }
-
       if (request.method === "POST" && url.pathname === "/auth/login") {
         const body = (await request.json().catch(() => null)) as {
           clientCode?: string;
@@ -216,9 +235,9 @@ export default {
 
       let buckets: Record<string, BucketConfig>;
       try {
-        buckets = parseBucketConfigs(env.BUCKET_CONFIGS_JSON);
+        buckets = readBucketConfigsFromEnv(env);
       } catch (error) {
-        console.error("[vault-api] invalid BUCKET_CONFIGS_JSON", {
+        console.error("[vault-api] invalid indexed bucket secrets", {
           requestId,
           path: url.pathname,
           error: serializeError(error),
