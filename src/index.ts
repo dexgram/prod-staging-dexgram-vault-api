@@ -138,10 +138,7 @@ function validateBucketConfig(bucket: BucketConfig): string | null {
 
 function normalizeBucketEndpoint(endpoint: string): string {
   const trimmed = endpoint.trim();
-  const withoutWrappingJunk = trimmed.replace(/^[\s"'`\\]+|[\s"'`,;\\]+$/g, "");
-  const unquoted = withoutWrappingJunk
-    .replace(/^(?:["'])(.*)(?:["'])$/, "$1")
-    .trim();
+  const unquoted = trimmed.replace(/^(["'])(.*)\1$/, "$2").trim();
 
   if (/^[a-z][a-z\d+.-]*:\/\//i.test(unquoted)) {
     return unquoted;
