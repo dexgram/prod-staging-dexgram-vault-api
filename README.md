@@ -228,12 +228,12 @@ In CI/CD, the workflow `.github/workflows/deploy-prod.yml` syncs GitHub secrets 
 
 Configure these GitHub secrets in the `prod` environment:
 
-- `SESSION_SECRET`
-- `BUCKET_ID_1`
-- `BUCKET_NAME_1`
-- `BUCKET_ENDPOINT_1`
-- `BUCKET_REGION_1`
-- `BUCKET_ACCESS_KEY_1`
-- `BUCKET_SECRET_KEY_1`
+- `wrangler secret put SESSION_SECRET`
+- `wrangler secret put BUCKET_ID_1`
+- `wrangler secret put BUCKET_NAME_1`
+- `wrangler secret put BUCKET_ENDPOINT_1`
+- `wrangler secret put BUCKET_REGION_1`
+- `wrangler secret put BUCKET_ACCESS_KEY_1`
+- `wrangler secret put BUCKET_SECRET_KEY_1`
 
 For additional bucket slots, duplicate the same pattern (`_2`, `_3`, etc.) in both GitHub environment secrets and workflow sync steps.

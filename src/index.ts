@@ -165,28 +165,17 @@ function validateBucketConfig(bucket: BucketConfig): string | null {
 
 function normalizeBucketEndpoint(endpoint: string): string {
   const trimmed = endpoint.trim();
-  const withoutWrappingJunk = trimmed.replace(/^[\s"'`\\]+|[\s"'`,;\\]+$/g, "");
-  const unquoted = withoutWrappingJunk
-    .replace(/^(?:["'])(.*)(?:["'])$/, "$1")
-    .trim();
+  const unquoted = trimmed.replace(/^(["'])(.*)\1$/, "$2").trim();
 
-  // Remove invisible/control whitespace that can come from copy/paste in secrets
-  // (e.g. zero-width chars, non-breaking spaces, line separators).
-  const withoutInvisibleChars = unquoted.replace(
-    /[\u0000-\u001F\u007F\u00A0\u1680\u180E\u2000-\u200F\u2028\u2029\u202F\u205F\u3000\uFEFF]+/g,
-    "",
-  );
-  const compacted = withoutInvisibleChars.replace(/\s+/g, "");
-
-  if (/^[a-z][a-z\d+.-]*:\/\//i.test(compacted)) {
-    return compacted;
+  if (/^[a-z][a-z\d+.-]*:\/\//i.test(unquoted)) {
+    return unquoted;
   }
 
-  if (compacted.startsWith("//")) {
-    return `https:${compacted}`;
+  if (unquoted.startsWith("//")) {
+    return `https:${unquoted}`;
   }
 
-  return `https://${compacted}`;
+  return `https://${unquoted}`;
 }
 
 export default {
@@ -282,9 +271,6 @@ export default {
           normalizedEndpointPreview: normalizeBucketEndpoint(
             String(bucket.endpoint ?? ""),
           ).slice(0, 200),
-          endpointCharCodesPreview: Array.from(
-            String(bucket.endpoint ?? "").slice(0, 32),
-          ).map((char) => char.charCodeAt(0)),
         });
         return badRequest("Server misconfigured: invalid user bucket config", 500);
       }
