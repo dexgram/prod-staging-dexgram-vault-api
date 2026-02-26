@@ -224,7 +224,9 @@ WHERE client_code = '3912607696116679';
 
 ## GitHub Actions secret injection
 
-In CI/CD, inject secrets as environment variables / Worker secrets before deploy:
+In CI/CD, the workflow `.github/workflows/deploy-prod.yml` syncs GitHub secrets to Cloudflare on every deploy.
+
+Configure these GitHub secrets in the `prod` environment:
 
 - `wrangler secret put SESSION_SECRET`
 - `wrangler secret put BUCKET_ID_1`
@@ -234,4 +236,4 @@ In CI/CD, inject secrets as environment variables / Worker secrets before deploy
 - `wrangler secret put BUCKET_ACCESS_KEY_1`
 - `wrangler secret put BUCKET_SECRET_KEY_1`
 
-You can store encrypted values in GitHub repository secrets and pipe them to Wrangler during deployment.
+For additional bucket slots, duplicate the same pattern (`_2`, `_3`, etc.) in both GitHub environment secrets and workflow sync steps.

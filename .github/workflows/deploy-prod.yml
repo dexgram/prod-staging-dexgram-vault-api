@@ -34,9 +34,16 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Push secrets
+          # Push core secret
           printf "%s" "${SESSION_SECRET}" | npx wrangler secret put SESSION_SECRET --env prod
-          printf "%s" "${BUCKET_CONFIGS_JSON}" | npx wrangler secret put BUCKET_CONFIGS_JSON --env prod
+
+          # Push indexed bucket secrets (slot 1)
+          printf "%s" "${BUCKET_ID_1}" | npx wrangler secret put BUCKET_ID_1 --env prod
+          printf "%s" "${BUCKET_NAME_1}" | npx wrangler secret put BUCKET_NAME_1 --env prod
+          printf "%s" "${BUCKET_ENDPOINT_1}" | npx wrangler secret put BUCKET_ENDPOINT_1 --env prod
+          printf "%s" "${BUCKET_REGION_1}" | npx wrangler secret put BUCKET_REGION_1 --env prod
+          printf "%s" "${BUCKET_ACCESS_KEY_1}" | npx wrangler secret put BUCKET_ACCESS_KEY_1 --env prod
+          printf "%s" "${BUCKET_SECRET_KEY_1}" | npx wrangler secret put BUCKET_SECRET_KEY_1 --env prod
 
           echo "Secrets synced to Cloudflare (prod)"
         env:
@@ -44,7 +51,12 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 
           SESSION_SECRET: ${{ secrets.SESSION_SECRET }}
-          BUCKET_CONFIGS_JSON: ${{ secrets.BUCKET_CONFIGS_JSON }}
+          BUCKET_ID_1: ${{ secrets.BUCKET_ID_1 }}
+          BUCKET_NAME_1: ${{ secrets.BUCKET_NAME_1 }}
+          BUCKET_ENDPOINT_1: ${{ secrets.BUCKET_ENDPOINT_1 }}
+          BUCKET_REGION_1: ${{ secrets.BUCKET_REGION_1 }}
+          BUCKET_ACCESS_KEY_1: ${{ secrets.BUCKET_ACCESS_KEY_1 }}
+          BUCKET_SECRET_KEY_1: ${{ secrets.BUCKET_SECRET_KEY_1 }}
 
       # 2) Deploy worker (prod)
       - name: Deploy with Wrangler (prod)
