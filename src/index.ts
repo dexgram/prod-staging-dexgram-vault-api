@@ -137,29 +137,11 @@ function validateBucketConfig(bucket: BucketConfig): string | null {
 }
 
 function normalizeBucketEndpoint(endpoint: string): string {
-  const raw = String(endpoint ?? "");
-  const cleaned = raw
-    .replace(/[\u200B-\u200D\uFEFF]/g, "")
-    .trim()
-    .replace(/^["'`“”‘’]+|["'`“”‘’]+$/g, "")
-    .replace(/,+$/g, "")
-    .replace(/\\//g, "/")
-    .replace(/\s+/g, "");
-
-  if (cleaned.startsWith("//")) {
-    return `https:${cleaned}`;
+  const trimmed = endpoint.trim();
+  if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+    return trimmed;
   }
-
-  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(cleaned)) {
-    return cleaned;
-  }
-
-  const embeddedUrl = cleaned.match(/https?:\/\/[^\s"'`,]+/i)?.[0];
-  if (embeddedUrl) {
-    return embeddedUrl;
-  }
-
-  return `https://${cleaned}`;
+  return `https://${trimmed}`;
 }
 
 export default {
@@ -259,9 +241,6 @@ export default {
           path: url.pathname,
           bucketId: user.bucket_id,
           message: bucketConfigError,
-          endpoint: String(bucket.endpoint),
-          normalizedEndpoint: normalizeBucketEndpoint(bucket.endpoint),
-          endpointChars: Array.from(String(bucket.endpoint ?? "")).map((char) => char.charCodeAt(0)),
         });
         return badRequest("Server misconfigured: invalid user bucket config", 500);
       }
