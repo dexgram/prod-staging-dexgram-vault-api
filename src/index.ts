@@ -120,6 +120,22 @@ function usagePayload(user: UserRow) {
   };
 }
 
+function validateBucketConfig(bucket: BucketConfig): string | null {
+  if (!bucket.endpoint) return "bucket endpoint is missing";
+  if (!bucket.bucketName) return "bucket name is missing";
+  if (!bucket.region) return "bucket region is missing";
+  if (!bucket.accessKey) return "bucket access key is missing";
+  if (!bucket.secretKey) return "bucket secret key is missing";
+
+  try {
+    new URL(bucket.endpoint);
+  } catch {
+    return "bucket endpoint is not a valid URL";
+  }
+
+  return null;
+}
+
 export default {
   async fetch(request, env, ctx): Promise<Response> {
     const requestId = crypto.randomUUID();
