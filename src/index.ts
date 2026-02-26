@@ -128,12 +128,38 @@ function validateBucketConfig(bucket: BucketConfig): string | null {
   if (!bucket.secretKey) return "bucket secret key is missing";
 
   try {
-    new URL(bucket.endpoint);
+    new URL(normalizeBucketEndpoint(bucket.endpoint));
   } catch {
     return "bucket endpoint is not a valid URL";
   }
 
   return null;
+}
+
+function normalizeBucketEndpoint(endpoint: string): string {
+  const raw = String(endpoint ?? "");
+  const cleaned = raw
+    .replace(/[\u200B-\u200D\uFEFF]/g, "")
+    .trim()
+    .replace(/^["'`“”‘’]+|["'`“”‘’]+$/g, "")
+    .replace(/,+$/g, "")
+    .replace(/\\//g, "/")
+    .replace(/\s+/g, "");
+
+  if (cleaned.startsWith("//")) {
+    return `https:${cleaned}`;
+  }
+
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(cleaned)) {
+    return cleaned;
+  }
+
+  const embeddedUrl = cleaned.match(/https?:\/\/[^\s"'`,]+/i)?.[0];
+  if (embeddedUrl) {
+    return embeddedUrl;
+  }
+
+  return `https://${cleaned}`;
 }
 
 export default {
@@ -226,6 +252,25 @@ export default {
         return badRequest("User bucket is not configured", 500);
       }
 
+      const bucketConfigError = validateBucketConfig(bucket);
+      if (bucketConfigError) {
+        console.error("[vault-api] invalid user bucket config", {
+          requestId,
+          path: url.pathname,
+          bucketId: user.bucket_id,
+          message: bucketConfigError,
+          endpoint: String(bucket.endpoint),
+          normalizedEndpoint: normalizeBucketEndpoint(bucket.endpoint),
+          endpointChars: Array.from(String(bucket.endpoint ?? "")).map((char) => char.charCodeAt(0)),
+        });
+        return badRequest("Server misconfigured: invalid user bucket config", 500);
+      }
+
+      const normalizedBucket: BucketConfig = {
+        ...bucket,
+        endpoint: normalizeBucketEndpoint(bucket.endpoint),
+      };
+
       if (request.method === "POST" && url.pathname === "/uploads/request") {
         const body = (await request.json().catch(() => null)) as {
           mimeType?: string;
@@ -268,7 +313,7 @@ export default {
         const ttl = Number(env.URL_TTL_SECONDS ?? 300);
         const uploadUrl = await presignUrl({
           method: "PUT",
-          bucket,
+          bucket: normalizedBucket,
           objectKey,
           expiresInSeconds: ttl,
           headers: {
@@ -313,7 +358,7 @@ export default {
 
         const headUrl = await presignUrl({
           method: "HEAD",
-          bucket,
+          bucket: normalizedBucket,
           objectKey: file.object_key,
           expiresInSeconds: 120,
         });
@@ -368,7 +413,7 @@ export default {
         const ttl = Number(env.URL_TTL_SECONDS ?? 300);
         const downloadUrl = await presignUrl({
           method: "GET",
-          bucket,
+          bucket: normalizedBucket,
           objectKey: file.object_key,
           expiresInSeconds: ttl,
         });
@@ -415,7 +460,7 @@ export default {
 
         const deleteUrl = await presignUrl({
           method: "DELETE",
-          bucket,
+          bucket: normalizedBucket,
           objectKey: file.object_key,
           expiresInSeconds: 60,
         });
