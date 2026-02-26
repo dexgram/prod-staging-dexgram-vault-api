@@ -123,19 +123,30 @@ fi
 echo "    upload PUT OK"
 
 echo "==> 4) Complete upload in API"
-COMPLETE_RESP="$(curl -sS "$API_BASE/uploads/complete" \
+COMPLETE_STATUS="$(curl -sS -o /tmp/dexgram_complete_response.txt -w '%{http_code}' "$API_BASE/uploads/complete" \
   -H "authorization: Bearer $TOKEN" \
   -H 'content-type: application/json' \
   -d "$(jq -nc --arg fid "$FILE_ID" '{fileId:$fid}')")"
 
-STATUS="$(echo "$COMPLETE_RESP" | jq -r '.status // empty')"
-if [[ "$STATUS" != "active" ]]; then
-  echo "ERROR: complete failed" >&2
+COMPLETE_RESP="$(cat /tmp/dexgram_complete_response.txt)"
+
+if [[ "$COMPLETE_STATUS" != "200" ]]; then
+  echo "ERROR: complete failed with HTTP $COMPLETE_STATUS" >&2
   echo "$COMPLETE_RESP" >&2
   exit 1
 fi
 
-echo "    complete OK (status=active)"
+STATUS="$(echo "$COMPLETE_RESP" | jq -r '.status // empty')"
+if [[ "$STATUS" == "active" ]]; then
+  echo "    complete OK (status=active)"
+elif [[ "$(echo "$COMPLETE_RESP" | jq -r '.sizeBytes // empty')" != "" ]]; then
+  echo "    complete OK (activated now)"
+else
+  echo "ERROR: complete failed" >&2
+  echo "$COMPLETE_RESP" >&2
+  exit 1
+fi
+echo "    complete response: $COMPLETE_RESP"
 
 echo "==> 5) List files"
 LIST_RESP="$(curl -sS "$API_BASE/files" -H "authorization: Bearer $TOKEN")"
