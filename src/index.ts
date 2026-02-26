@@ -4,9 +4,9 @@ import { presignUrl, type BucketConfig } from "./utils/s3";
 import { signSessionToken, verifySessionToken } from "./utils/token";
 
 interface Env {
+  [key: string]: unknown;
   DB: D1Database;
   SESSION_SECRET: string;
-  BUCKET_CONFIGS_JSON: string;
   TOKEN_TTL_SECONDS?: string;
   URL_TTL_SECONDS?: string;
   MAX_UPLOAD_BYTES?: string;
@@ -47,12 +47,39 @@ const json = (body: unknown, status = 200) =>
 const badRequest = (message: string, status = 400) =>
   json({ error: message }, status);
 
-function parseBucketConfigs(raw: string): Record<string, BucketConfig> {
-  const parsed = JSON.parse(raw) as BucketConfig[];
-  return parsed.reduce<Record<string, BucketConfig>>((acc, bucket) => {
-    acc[bucket.id] = bucket;
-    return acc;
-  }, {});
+function readBucketConfigsFromEnv(env: Env): Record<string, BucketConfig> {
+  const buckets: Record<string, BucketConfig> = {};
+  const maxBucketSlots = 20;
+
+  for (let index = 1; index <= maxBucketSlots; index += 1) {
+    const id = String(env[`BUCKET_ID_${index}`] ?? "").trim();
+    if (!id) continue;
+
+    const bucketName = String(env[`BUCKET_NAME_${index}`] ?? "").trim();
+    const endpoint = String(env[`BUCKET_ENDPOINT_${index}`] ?? "").trim();
+    const region = String(env[`BUCKET_REGION_${index}`] ?? "").trim();
+    const accessKey = String(env[`BUCKET_ACCESS_KEY_${index}`] ?? "").trim();
+    const secretKey = String(env[`BUCKET_SECRET_KEY_${index}`] ?? "").trim();
+
+    if (!bucketName || !endpoint || !region || !accessKey || !secretKey) {
+      throw new Error(`Incomplete bucket config at index ${index}`);
+    }
+
+    buckets[id] = {
+      id,
+      bucketName,
+      endpoint,
+      region,
+      accessKey,
+      secretKey,
+    };
+  }
+
+  if (Object.keys(buckets).length === 0) {
+    throw new Error("No bucket config found in indexed bucket secrets");
+  }
+
+  return buckets;
 }
 
 function serializeError(error: unknown): Record<string, unknown> {
@@ -138,10 +165,28 @@ function validateBucketConfig(bucket: BucketConfig): string | null {
 
 function normalizeBucketEndpoint(endpoint: string): string {
   const trimmed = endpoint.trim();
-  if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
-    return trimmed;
+  const withoutWrappingJunk = trimmed.replace(/^[\s"'`\\]+|[\s"'`,;\\]+$/g, "");
+  const unquoted = withoutWrappingJunk
+    .replace(/^(?:["'])(.*)(?:["'])$/, "$1")
+    .trim();
+
+  // Remove invisible/control whitespace that can come from copy/paste in secrets
+  // (e.g. zero-width chars, non-breaking spaces, line separators).
+  const withoutInvisibleChars = unquoted.replace(
+    /[\u0000-\u001F\u007F\u00A0\u1680\u180E\u2000-\u200F\u2028\u2029\u202F\u205F\u3000\uFEFF]+/g,
+    "",
+  );
+  const compacted = withoutInvisibleChars.replace(/\s+/g, "");
+
+  if (/^[a-z][a-z\d+.-]*:\/\//i.test(compacted)) {
+    return compacted;
   }
-  return `https://${trimmed}`;
+
+  if (compacted.startsWith("//")) {
+    return `https:${compacted}`;
+  }
+
+  return `https://${compacted}`;
 }
 
 export default {
@@ -160,14 +205,6 @@ export default {
 
       if (!env.SESSION_SECRET) {
         console.error("[vault-api] missing SESSION_SECRET", {
-          requestId,
-          path: url.pathname,
-        });
-        return badRequest("Server misconfigured", 500);
-      }
-
-      if (!env.BUCKET_CONFIGS_JSON) {
-        console.error("[vault-api] missing BUCKET_CONFIGS_JSON", {
           requestId,
           path: url.pathname,
         });
@@ -209,9 +246,9 @@ export default {
 
       let buckets: Record<string, BucketConfig>;
       try {
-        buckets = parseBucketConfigs(env.BUCKET_CONFIGS_JSON);
+        buckets = readBucketConfigsFromEnv(env);
       } catch (error) {
-        console.error("[vault-api] invalid BUCKET_CONFIGS_JSON", {
+        console.error("[vault-api] invalid indexed bucket secrets", {
           requestId,
           path: url.pathname,
           error: serializeError(error),
@@ -241,6 +278,13 @@ export default {
           path: url.pathname,
           bucketId: user.bucket_id,
           message: bucketConfigError,
+          endpointPreview: String(bucket.endpoint ?? "").slice(0, 200),
+          normalizedEndpointPreview: normalizeBucketEndpoint(
+            String(bucket.endpoint ?? ""),
+          ).slice(0, 200),
+          endpointCharCodesPreview: Array.from(
+            String(bucket.endpoint ?? "").slice(0, 32),
+          ).map((char) => char.charCodeAt(0)),
         });
         return badRequest("Server misconfigured: invalid user bucket config", 500);
       }

@@ -44,27 +44,23 @@ Apply migrations from `migrations/` (see commands below). Core tables:
 Set with Worker secrets or GitHub Actions secrets:
 
 - `SESSION_SECRET`: random long HMAC secret for session tokens.
-- `BUCKET_CONFIGS_JSON`: array of bucket configs:
+- Indexed bucket secrets (no JSON). For each bucket slot `N` (1..20), configure:
+  - `BUCKET_ID_N` (must match `users.bucket_id` in D1)
+  - `BUCKET_NAME_N`
+  - `BUCKET_ENDPOINT_N`
+  - `BUCKET_REGION_N`
+  - `BUCKET_ACCESS_KEY_N`
+  - `BUCKET_SECRET_KEY_N`
 
-```json
-[
-  {
-    "id": "wasabi-eu-1",
-    "bucketName": "my-app-bucket-1",
-    "endpoint": "https://s3.eu-central-1.wasabisys.com",
-    "region": "eu-central-1",
-    "accessKey": "...",
-    "secretKey": "..."
-  },
-  {
-    "id": "b2-us-west-1",
-    "bucketName": "my-app-bucket-2",
-    "endpoint": "https://s3.us-west-001.backblazeb2.com",
-    "region": "us-west-001",
-    "accessKey": "...",
-    "secretKey": "..."
-  }
-]
+Example for one bucket:
+
+```bash
+BUCKET_ID_1=b2-us-west-1
+BUCKET_NAME_1=dexgram-vault-001
+BUCKET_ENDPOINT_1=https://s3.us-west-000.backblazeb2.com
+BUCKET_REGION_1=us-west-001
+BUCKET_ACCESS_KEY_1=...
+BUCKET_SECRET_KEY_1=...
 ```
 
 Optional non-secret vars:
@@ -93,7 +89,12 @@ Optional non-secret vars:
 5. Add secrets:
    ```bash
    npx wrangler secret put SESSION_SECRET
-   npx wrangler secret put BUCKET_CONFIGS_JSON
+   npx wrangler secret put BUCKET_ID_1
+   npx wrangler secret put BUCKET_NAME_1
+   npx wrangler secret put BUCKET_ENDPOINT_1
+   npx wrangler secret put BUCKET_REGION_1
+   npx wrangler secret put BUCKET_ACCESS_KEY_1
+   npx wrangler secret put BUCKET_SECRET_KEY_1
    ```
 6. Run Worker:
    ```bash
@@ -184,7 +185,7 @@ curl -s https://prod-vaultdb.dexgram.app/files \
 Cloudflare `1101` means the Worker crashed with an unhandled runtime exception.
 In this project, common causes are:
 
-- invalid `BUCKET_CONFIGS_JSON` (fails in `JSON.parse`)
+- missing or incomplete indexed bucket secrets (`BUCKET_ID_N`, `BUCKET_NAME_N`, `BUCKET_ENDPOINT_N`, `BUCKET_REGION_N`, `BUCKET_ACCESS_KEY_N`, `BUCKET_SECRET_KEY_N`)
 - missing/misconfigured `DB` binding
 - unexpected data shape from D1 that triggers an exception
 
@@ -223,9 +224,16 @@ WHERE client_code = '3912607696116679';
 
 ## GitHub Actions secret injection
 
-In CI/CD, inject secrets as environment variables / Worker secrets before deploy:
+In CI/CD, the workflow `.github/workflows/deploy-prod.yml` syncs GitHub secrets to Cloudflare on every deploy.
 
-- `wrangler secret put SESSION_SECRET`
-- `wrangler secret put BUCKET_CONFIGS_JSON`
+Configure these GitHub secrets in the `prod` environment:
 
-You can store encrypted values in GitHub repository secrets and pipe them to Wrangler during deployment.
+- `SESSION_SECRET`
+- `BUCKET_ID_1`
+- `BUCKET_NAME_1`
+- `BUCKET_ENDPOINT_1`
+- `BUCKET_REGION_1`
+- `BUCKET_ACCESS_KEY_1`
+- `BUCKET_SECRET_KEY_1`
+
+For additional bucket slots, duplicate the same pattern (`_2`, `_3`, etc.) in both GitHub environment secrets and workflow sync steps.
