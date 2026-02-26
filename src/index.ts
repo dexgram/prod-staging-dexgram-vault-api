@@ -138,21 +138,17 @@ function validateBucketConfig(bucket: BucketConfig): string | null {
 
 function normalizeBucketEndpoint(endpoint: string): string {
   const trimmed = endpoint.trim();
-  const withoutWrappingJunk = trimmed.replace(/^[\s"'`\\]+|[\s"'`,;\\]+$/g, "");
-  const unquoted = withoutWrappingJunk
-    .replace(/^(?:["'])(.*)(?:["'])$/, "$1")
-    .trim();
-  const compacted = unquoted.replace(/\s+/g, "");
+  const unquoted = trimmed.replace(/^(["'])(.*)\1$/, "$2").trim();
 
-  if (/^[a-z][a-z\d+.-]*:\/\//i.test(compacted)) {
-    return compacted;
+  if (/^[a-z][a-z\d+.-]*:\/\//i.test(unquoted)) {
+    return unquoted;
   }
 
-  if (compacted.startsWith("//")) {
-    return `https:${compacted}`;
+  if (unquoted.startsWith("//")) {
+    return `https:${unquoted}`;
   }
 
-  return `https://${compacted}`;
+  return `https://${unquoted}`;
 }
 
 export default {
