@@ -248,6 +248,10 @@ export default {
           path: url.pathname,
           bucketId: user.bucket_id,
           message: bucketConfigError,
+          endpointPreview: String(bucket.endpoint ?? "").slice(0, 200),
+          normalizedEndpointPreview: normalizeBucketEndpoint(
+            String(bucket.endpoint ?? ""),
+          ).slice(0, 200),
         });
         return badRequest("Server misconfigured: invalid user bucket config", 500);
       }
