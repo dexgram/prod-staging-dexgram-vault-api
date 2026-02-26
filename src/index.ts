@@ -226,19 +226,6 @@ export default {
         return badRequest("User bucket is not configured", 500);
       }
 
-      const bucketIssue = validateBucketConfig(bucket);
-      if (bucketIssue) {
-        console.error("[vault-api] invalid bucket configuration for user", {
-          requestId,
-          path: url.pathname,
-          clientCode,
-          bucketId: user.bucket_id,
-          bucketEndpoint: bucket.endpoint,
-          bucketIssue,
-        });
-        return badRequest(`Server misconfigured: ${bucketIssue}`, 500);
-      }
-
       if (request.method === "POST" && url.pathname === "/uploads/request") {
         const body = (await request.json().catch(() => null)) as {
           mimeType?: string;
