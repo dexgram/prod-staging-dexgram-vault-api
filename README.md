@@ -178,6 +178,35 @@ curl -s https://prod-vaultdb.dexgram.app/files \
   -H "authorization: Bearer $TOKEN"
 ```
 
+## Demo script: end-to-end upload
+
+Yes: the client should validate file metadata **before** requesting a presigned upload URL.
+
+- detect/choose `mimeType`
+- compute exact `sizeBytes`
+- apply local product rules (e.g. max size, allowed types)
+
+The API also revalidates plan/quota/subscription and returns the exact signed headers required for PUT (`content-type`, `content-length`).
+
+Use the included demo script to run the full flow from start to finish:
+
+```bash
+# create a small demo file
+echo -n "hello world!" > hello.txt
+
+# run end-to-end demo
+./scripts/demo-upload.sh "3912607696116670" ./hello.txt
+```
+
+What the script does:
+
+1. validates local file (exists, size > 0, basic MIME allowlist)
+2. logs in (`POST /auth/login`)
+3. requests upload URL (`POST /uploads/request`)
+4. uploads file bytes to `uploadUrl` with required headers (PUT)
+5. completes upload (`POST /uploads/complete`)
+6. lists files (`GET /files`)
+
 ## Troubleshooting
 
 ### `error code: 1101` on Cloudflare
